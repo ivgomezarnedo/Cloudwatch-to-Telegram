@@ -3,19 +3,11 @@ from datetime import datetime, timedelta
 from utils import telegram_methods, common_methods
 
 
-client = boto3.client(
-    'logs',
-    aws_access_key_id=common_methods.AWS_ID,
-    aws_secret_access_key=common_methods.AWS_KEY,
-    region_name=common_methods.AWS_REGION
-)
-
-
-def get_log_events(log_group, client, start_time=None, end_time=None):
+def get_log_events(log_group, aws_client, start_time=None, end_time=None):
     """Generate all the log events from a CloudWatch group.
     Args:
         log_group: Name of the CloudWatch log group.
-        client: boto3 client for CloudWatch.
+        aws_client: boto3 client for CloudWatch.
         start_time: Only fetch events with a timestamp after this time.
             Expressed as the number of milliseconds after midnight Jan 1 1970.
         end_time: Only fetch events with a timestamp before this time.
@@ -33,11 +25,11 @@ def get_log_events(log_group, client, start_time=None, end_time=None):
         kwargs['endTime'] = end_time
 
     while True:
-        resp = client.filter_log_events(**kwargs)
+        resp = aws_client.filter_log_events(**kwargs)
         yield from resp['events']
         try:
             kwargs['nextToken'] = resp['nextToken']
-        except KeyError:
+        except KeyError:  # no more pages
             break
 
 
@@ -67,13 +59,19 @@ def write_to_file(log_text, file_path):
 
 
 def main(log_group, hours_since):
-    start_time = get_start_time(hours)
+    client = boto3.client(
+        'logs',
+        aws_access_key_id=common_methods.AWS_ID,
+        aws_secret_access_key=common_methods.AWS_KEY,
+        region_name=common_methods.AWS_REGION
+    )
+    start_time = get_start_time(hours_since)
     log_text = ""
     print("Downloading logs from CloudWatch...")
-    for x in get_log_events(log_group=log_group, client=client, start_time=start_time):
+    for x in get_log_events(log_group=log_group, aws_client=client, start_time=start_time):
         log_text = log_text + x['message']
     file_name = f"{str(datetime.now())[0:19].replace(' ','_').replace(':','_')}_logs.txt"
-    file_path = "/tmp/" + file_name
+    file_path = "/tmp/" + file_name  # tmp is the only writable folder in AWS Lambda
     print(f"Writing logs to file {file_path}")
     write_to_file(log_text, file_path)
     print("Uploading logs to Telegram...")
